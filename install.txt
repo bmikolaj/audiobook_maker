@@ -1,3 +1,7 @@
+ffmpeg
+https://www.gyan.dev/ffmpeg/builds/
+Add bin/ to PATH
+
 Python 3.11
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 pip install kokoro soundfile numpy ebooklib beautifulsoup4 PyMuPDF

@@ -414,7 +414,7 @@ def export_m4b(
 
 VOICE_INFO = {
     # ── American English female ───────────────────────────────────────────────
-    "af_heart":   "Warm, expressive, emotive — best all-round audiobook voice (American) ← RECOMMENDED",
+    "af_heart":   "Warm, expressive, emotive — best all-round audiobook voice (American)",
     "af_alloy":   "Smooth, neutral, versatile — clean delivery, suits non-fiction (American)",
     "af_aoede":   "Soft, lyrical, musical cadence — great for poetry or literary fiction (American)",
     "af_bella":   "Bright, animated, youthful — engaging for YA or upbeat narratives (American)",
@@ -460,8 +460,8 @@ def main():
         help="Kokoro voice ID (default: af_heart). Use --list-voices to see options."
     )
     parser.add_argument(
-        "-s", "--speed", type=float, default=1.0,
-        help="Narration speed multiplier. 0.9 = slightly slower/more dramatic. (default: 1.0)"
+        "-s", "--speed", type=float, default=0.9,
+        help="Narration speed multiplier. default 0.9 = slightly slower/more dramatic."
     )
     parser.add_argument(
         "-o", "--output", default=None,
