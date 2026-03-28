@@ -456,19 +456,19 @@ def main():
     )
     parser.add_argument("input", nargs="?", help="Path to EPUB or PDF file")
     parser.add_argument(
-        "--voice", default="af_heart",
+        "-v", "--voice", default="af_heart",
         help="Kokoro voice ID (default: af_heart). Use --list-voices to see options."
     )
     parser.add_argument(
-        "--speed", type=float, default=1.0,
+        "-s", "--speed", type=float, default=1.0,
         help="Narration speed multiplier. 0.9 = slightly slower/more dramatic. (default: 1.0)"
     )
     parser.add_argument(
-        "--output", default=None,
+        "-o", "--output", default=None,
         help="Output directory (default: <cwd>/<book_name>/)"
     )
     parser.add_argument(
-        "--list-voices", action="store_true",
+        "-lv", "--list-voices", action="store_true",
         help="Print available voices and exit"
     )
     parser.add_argument(
@@ -548,7 +548,7 @@ def main():
 
         from kokoro import KPipeline
         lang_code = 'b' if args.voice.startswith('b') else 'a'
-        pipeline = KPipeline(lang_code=lang_code, device='cuda')
+        pipeline = KPipeline(lang_code=lang_code, device='cuda', repo_id='hexgrad/Kokoro-82M')
         print(f"  ✓ Kokoro loaded  (lang={lang_code}, device=cuda)\n")
     except ImportError:
         print("\nError: Kokoro not installed. Run:")
