@@ -3,5 +3,8 @@ https://www.gyan.dev/ffmpeg/builds/
 Add bin/ to PATH
 
 Python 3.11
+
+Run nvidia-smi to find latest cuda version for machine. Use cu124 as highest version
+
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 pip install kokoro soundfile numpy ebooklib beautifulsoup4 PyMuPDF
