@@ -43,7 +43,6 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 import os
 import re
 import sys
-import json
 import shutil
 import argparse
 import tempfile
@@ -52,6 +51,8 @@ from pathlib import Path
 import numpy as np
 import soundfile as sf
 
+
+import clean_pdf
 
 
 
@@ -456,6 +457,10 @@ def main():
     )
     parser.add_argument("input", nargs="?", help="Path to EPUB or PDF file")
     parser.add_argument(
+        "-a", "--article", action="store_true",
+        help="Processes a pdf article"
+    )
+    parser.add_argument(
         "-v", "--voice", default="af_heart",
         help="Kokoro voice ID (default: af_heart). Use --list-voices to see options."
     )
@@ -497,6 +502,9 @@ def main():
     if input_path.suffix.lower() not in ('.epub', '.pdf'):
         print(f"Error: unsupported file type '{input_path.suffix}'. Use .epub or .pdf")
         sys.exit(1)
+
+    if args.article:
+        clean_pdf.strip_pdf(input_path, input_path)
 
     out_dir = Path(args.output) if args.output else Path.cwd() / f"{input_path.stem}"
     out_dir.mkdir(parents=True, exist_ok=True)
