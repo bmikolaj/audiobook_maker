@@ -1,6 +1,12 @@
 """
 strip_header_footer.py
 
+
+
+Tested only with The Atlantic articles so far
+
+
+
 Removes from each page of a browser-printed Atlantic article PDF:
   - Repeating header  ("URL", top ~15pt)
   - Repeating footer  ("X of 17 / timestamp", bottom ~15pt)
