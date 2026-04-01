@@ -488,41 +488,41 @@ def process_voice(
 
 VOICE_INFO = {
     # ── American English female ───────────────────────────────────────────────
-    "af_heart":   "Warm, expressive, emotive — best all-round audiobook voice (American)",
-    "af_alloy":   "Smooth, neutral, versatile — clean delivery, suits non-fiction (American)",
-    "af_aoede":   "Soft, lyrical, musical cadence — great for poetry or literary fiction (American)",
-    "af_bella":   "Bright, animated, youthful — engaging for YA or upbeat narratives (American)",
-    "af_charlie": "Friendly, conversational, relaxed — natural everyday tone (American)",
-    "af_jadzia":  "Energetic, vibrant, punchy — suits action or fast-paced stories (American)",
-    "af_jessica": "Professional, articulate, composed — good for business or self-help (American)",
-    "af_kore":    "Darker, deeper, mysterious — strong for thriller or gothic fiction (American)",
-    "af_nicole":  "Calm, measured, soothing — well-paced, suits long-form narration (American)",
-    "af_nova":    "Crisp, bright, confident — clear and attention-holding (American)",
-    "af_river":   "Gentle, flowing, unhurried — natural storytelling warmth (American)",
-    "af_sarah":   "Approachable, warm, clear — reliable all-purpose narrator (American)",
-    "af_sky":     "Airy, light, breathy — soft delivery, suits contemplative or romance (American)",
+    # fmt: voice_id: "Description (American) | Voice Quality: X | Grade: Y"
+    "af_heart":   "Warm, expressive, emotive — best all-round audiobook voice (American) | Voice Quality: — | Grade: A",
+    "af_bella":   "Bright, animated, youthful — engaging for YA or upbeat narratives (American) | Voice Quality: A | Grade: A-",
+    "af_nicole":  "Calm, measured, soothing — headphone-optimised, suits long-form narration (American) | Voice Quality: B | Grade: B-",
+    "af_aoede":   "Soft, lyrical, musical cadence — great for poetry or literary fiction (American) | Voice Quality: B | Grade: C+",
+    "af_kore":    "Darker, deeper, mysterious — strong for thriller or gothic fiction (American) | Voice Quality: B | Grade: C+",
+    "af_sarah":   "Approachable, warm, clear — reliable all-purpose narrator (American) | Voice Quality: B | Grade: C+",
+    "af_alloy":   "Smooth, neutral, versatile — clean delivery, suits non-fiction (American) | Voice Quality: B | Grade: C",
+    "af_nova":    "Crisp, bright, confident — clear and attention-holding (American) | Voice Quality: B | Grade: C",
+    "af_jessica": "Professional, articulate, composed — good for business or self-help (American) | Voice Quality: C | Grade: D",
+    "af_river":   "Gentle, flowing, unhurried — natural storytelling warmth (American) | Voice Quality: C | Grade: D",
+    "af_sky":     "Airy, light, breathy — soft delivery, suits contemplative or romance (American) | Voice Quality: B | Grade: C-",
     # ── American English male ─────────────────────────────────────────────────
-    "am_adam":    "Warm, deep, trustworthy — classic audiobook narrator quality (American)",
-    "am_echo":    "Resonant, smooth, deliberate — strong presence, suits drama (American)",
-    "am_eric":    "Friendly, mid-range, approachable — natural and easy to listen to (American)",
-    "am_fenrir":  "Deep, powerful, commanding — intense, suits action or fantasy (American)",
-    "am_liam":    "Youthful, energetic, casual — good for contemporary or YA fiction (American)",
-    "am_michael": "Clear, authoritative, measured — polished narrator, suits non-fiction (American)",
-    "am_onyx":    "Rich, deep, velvety — smooth and immersive long-form voice (American)",
-    "am_puck":    "Playful, quick, mischievous — expressive range, suits comedy or fantasy (American)",
+    "am_fenrir":  "Deep, powerful, commanding — intense, suits action or fantasy (American) | Voice Quality: B | Grade: C+",
+    "am_michael": "Clear, authoritative, measured — polished narrator, suits non-fiction (American) | Voice Quality: B | Grade: C+",
+    "am_puck":    "Playful, quick, mischievous — expressive range, suits comedy or fantasy (American) | Voice Quality: B | Grade: C+",
+    "am_echo":    "Resonant, smooth, deliberate — strong presence, suits drama (American) | Voice Quality: C | Grade: D",
+    "am_eric":    "Friendly, mid-range, approachable — natural and easy to listen to (American) | Voice Quality: C | Grade: D",
+    "am_liam":    "Youthful, energetic, casual — good for contemporary or YA fiction (American) | Voice Quality: C | Grade: D",
+    "am_onyx":    "Rich, deep, velvety — smooth and immersive long-form voice (American) | Voice Quality: C | Grade: D",
+    "am_adam":    "Warm, deep, trustworthy — classic audiobook narrator quality (American) | Voice Quality: D | Grade: F+",
     # ── British English female ────────────────────────────────────────────────
-    "bf_alice":   "Refined, proper, precise — classic British female narrator (British)",
-    "bf_emma":    "Elegant, composed, warm — versatile literary narrator (British)",
-    "bf_lily":    "Soft, gentle, understated — calm and pleasant for long listens (British)",
+    "bf_emma":    "Elegant, composed, warm — versatile literary narrator (British) | Voice Quality: B | Grade: B-",
+    "bf_isabella":"Refined, clear, expressive — well-suited to literary fiction (British) | Voice Quality: B | Grade: C",
+    "bf_alice":   "Proper, precise, understated — classic British female narrator (British) | Voice Quality: C | Grade: D",
+    "bf_lily":    "Soft, gentle, unhurried — calm and pleasant for long listens (British) | Voice Quality: C | Grade: D",
     # ── British English male ──────────────────────────────────────────────────
-    "bm_daniel":  "Professional, measured, even — reliable and clear documentary style (British)",
-    "bm_fable":   "Rich, storytelling quality, slightly theatrical — strong for fiction (British)",
-    "bm_george":  "Classic, authoritative narrator — traditional audiobook gravitas (British)",
-    "bm_lewis":   "Deep, resonant, unhurried — commanding and immersive (British)",
+    "bm_fable":   "Rich, storytelling quality, slightly theatrical — strong for fiction (British) | Voice Quality: B | Grade: C",
+    "bm_george":  "Classic, authoritative narrator — traditional audiobook gravitas (British) | Voice Quality: B | Grade: C",
+    "bm_lewis":   "Deep, resonant, unhurried — commanding and immersive (British) | Voice Quality: C | Grade: D+",
+    "bm_daniel":  "Professional, measured, even — reliable documentary style (British) | Voice Quality: C | Grade: D",
 }
 
 
-def main():
+def main(arguments=None):
     parser = argparse.ArgumentParser(
         description="Convert EPUB or PDF to an expressive AI audiobook using Kokoro TTS",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -562,7 +562,7 @@ def main():
         help="Comma-separated chapter indices to process, e.g. '1,2,3' (for testing)"
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(arguments)
 
     if args.list_voices:
         print("\nAvailable Kokoro voices:\n")

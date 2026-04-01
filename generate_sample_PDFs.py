@@ -66,7 +66,22 @@ def generate_pdfs():
 
         print(f"  Saved: {output_path}")
 
+    print(f"\nDone. {len(voices)} file(s) created.")
+
+
+def generate_samples():
+    from audiobook_maker import main
+    from concurrent.futures import ThreadPoolExecutor
+
+    args_list = []
+
+    for voice in voices:
+        args_list.append([os.path.join('samples', f"{voice}_sample.pdf"), "-v",  f"{voice}", "-o", "samples"])
+
+    with ThreadPoolExecutor(max_workers=len(args_list)) as executor:
+        executor.map(main, args_list)
+
 
 if __name__ == "__main__":
     generate_pdfs()
-    print(f"\nDone. {len(voices)} file(s) created.")
+    generate_samples()
