@@ -30,20 +30,25 @@ def generate_pdfs():
         language = "an American" if voice[0] == 'a' else "British"
         gender = "male" if voice[1] == 'm' else "female"
         name = voice.split("_")[1]
-        description = VOICE_INFO[voice].split("(")[0].strip()
+        description = VOICE_INFO[voice]
 
         text = f"""
                 Hello. This is a sample of {language} English {gender} voice.
                 My name is {name} and Claude describes me as {description}.
+                
+                I am current speaking at 0.9 speed (that's naught point nine speed), this can be varied.
+                In this sample, I might sound a bit fast or slow depending on how my voice was architected.
+                
                 I am going to say a few sample sentences for your reference.
+                I might not know a few words so I spell them out. 
                 
                 The quick brown fox jumps over the lazy dog.
                 I said THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG! That was all caps this time.
                 
                 Some other things I might say in audiobooks are:
                 Winter is coming.
-                {"They're Taking the Hobbits to Isengard!".upper()}
-                The answer is 42.
+                They're Taking the Hobbits to Isengard!
+                The answer is 42 (that's forty-two).
                 Well yes, but actually no.
                 Elementary my dear Watson.
                 

@@ -486,9 +486,10 @@ def process_voice(
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+# https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md
+# fmt: voice_id: "Description (Language) | Voice Quality: X | Grade: Y"
 VOICE_INFO = {
     # ── American English female ───────────────────────────────────────────────
-    # fmt: voice_id: "Description (American) | Voice Quality: X | Grade: Y"
     "af_heart":   "Warm, expressive, emotive — best all-round audiobook voice (American) | Voice Quality: — | Grade: A",
     "af_bella":   "Bright, animated, youthful — engaging for YA or upbeat narratives (American) | Voice Quality: A | Grade: A-",
     "af_nicole":  "Calm, measured, soothing — headphone-optimised, suits long-form narration (American) | Voice Quality: B | Grade: B-",
