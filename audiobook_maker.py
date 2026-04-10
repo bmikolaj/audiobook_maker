@@ -376,7 +376,7 @@ def export_m4b(
         print("  Encoding audio (AAC)...")
         os.system(
             f'ffmpeg -y -f concat -safe 0 -i "{concat_file}" '
-            f'-c:a aac -b:a 64k "{combined_aac}" -loglevel warning'
+            f'-c:a aac -b:a 128k "{combined_aac}" -loglevel warning'
         )
 
         # 3. Build ffmpeg metadata file with chapter timestamps
@@ -401,7 +401,7 @@ def export_m4b(
         print("  Writing M4B with chapter markers...")
         os.system(
             f'ffmpeg -y -i "{combined_aac}" -i "{meta_file}" '
-            f'-map_metadata 1 -c copy "{output_path}" -loglevel warning'
+            f'-map_metadata 1 -c copy "{output_path}_AI" -loglevel warning'
         )
 
     if output_path.exists():
