@@ -40,20 +40,20 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import numpy as np
 import os
+from pathlib import Path
 import re
+import soundfile as sf
 import sys
 import shutil
-import argparse
 import tempfile
-from pathlib import Path
-
-import numpy as np
-import soundfile as sf
+import threading
 
 
 import clean_pdf
-
 
 
 # ── Text cleaning ─────────────────────────────────────────────────────────────
@@ -376,7 +376,7 @@ def export_m4b(
         print("  Encoding audio (AAC)...")
         os.system(
             f'ffmpeg -y -f concat -safe 0 -i "{concat_file}" '
-            f'-c:a aac -b:a 64k "{combined_aac}" -loglevel warning'
+            f'-c:a aac -b:a 128k "{combined_aac}" -loglevel warning'
         )
 
         # 3. Build ffmpeg metadata file with chapter timestamps
@@ -401,7 +401,7 @@ def export_m4b(
         print("  Writing M4B with chapter markers...")
         os.system(
             f'ffmpeg -y -i "{combined_aac}" -i "{meta_file}" '
-            f'-map_metadata 1 -c copy "{output_path}" -loglevel warning'
+            f'-map_metadata 1 -c copy "{output_path}_AI" -loglevel warning'
         )
 
     if output_path.exists():
@@ -411,45 +411,119 @@ def export_m4b(
         print("  ✗ M4B export failed — check that ffmpeg is working correctly")
 
 
+# ── Per-voice worker ──────────────────────────────────────────────────────────
+
+def process_voice(
+    voice: str,
+    chapters: list[tuple[str, str]],
+    pipelines: dict,
+    gpu_lock: threading.Lock,
+    out_dir: Path,
+    input_stem: str,
+    speed: float,
+    book_title: str,
+) -> tuple[str, Path | None]:
+    """
+    Synthesize all chapters for one voice, build an M4B, then clean up WAVs.
+    Runs inside a ThreadPoolExecutor worker. GPU synthesis is serialized via
+    gpu_lock so threads don't fight over the CUDA device, but ffmpeg encoding
+    and directory cleanup run genuinely in parallel between voices.
+
+    Returns (voice, m4b_path) — m4b_path is None if export failed.
+    """
+    lang_code = 'b' if voice.startswith('b') else 'a'
+    pipeline = pipelines[lang_code]
+
+    # Each voice gets its own WAV subdirectory
+    wav_dir = out_dir / voice
+    wav_dir.mkdir(parents=True, exist_ok=True)
+
+    chapter_files = []
+    chapter_durations = []
+
+    for i, (title, text) in enumerate(chapters):
+        safe = re.sub(r'[^\w\s\-]', '', title).strip()
+        safe = re.sub(r'\s+', '_', safe)[:50]
+        out_file = wav_dir / f"{i+1:02d}_{safe}.wav"
+
+        # Reuse existing WAV if present
+        if out_file.exists():
+            info = sf.info(str(out_file))
+            duration = info.duration
+            print(f"[{voice}] [{i+1}/{len(chapters)}] {title}  ← reusing  [{duration/60:.1f} min]")
+            chapter_files.append(out_file)
+            chapter_durations.append(duration)
+            continue
+
+        print(f"[{voice}] [{i+1}/{len(chapters)}] {title}")
+        with gpu_lock:
+            duration = synthesize_chapter(
+                pipeline, title, text, out_file,
+                voice=voice, speed=speed,
+            )
+        chapter_files.append(out_file)
+        chapter_durations.append(duration)
+
+    # M4B lands in the main output directory
+    m4b_path = out_dir / f"{input_stem}_(kokoro_{voice}_{speed}).m4b"
+    export_m4b(
+        chapter_files,
+        [t for t, _ in chapters],
+        chapter_durations,
+        m4b_path,
+        book_title=book_title,
+    )
+
+    # Clean up the per-voice WAV directory
+    if m4b_path.exists():
+        shutil.rmtree(wav_dir)
+        print(f"[{voice}] ✓ Removed WAV directory: {wav_dir.name}/")
+        return voice, m4b_path
+    else:
+        print(f"[{voice}] ✗ M4B failed — WAV files kept at: {wav_dir}/")
+        return voice, None
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+# https://huggingface.co/hexgrad/Kokoro-82M/blob/main/VOICES.md
+# fmt: voice_id: "Description (Language) | Voice Quality: X | Grade: Y"
 VOICE_INFO = {
     # ── American English female ───────────────────────────────────────────────
-    "af_heart":   "Warm, expressive, emotive — best all-round audiobook voice (American)",
-    "af_alloy":   "Smooth, neutral, versatile — clean delivery, suits non-fiction (American)",
-    "af_aoede":   "Soft, lyrical, musical cadence — great for poetry or literary fiction (American)",
-    "af_bella":   "Bright, animated, youthful — engaging for YA or upbeat narratives (American)",
-    "af_charlie": "Friendly, conversational, relaxed — natural everyday tone (American)",
-    "af_jadzia":  "Energetic, vibrant, punchy — suits action or fast-paced stories (American)",
-    "af_jessica": "Professional, articulate, composed — good for business or self-help (American)",
-    "af_kore":    "Darker, deeper, mysterious — strong for thriller or gothic fiction (American)",
-    "af_nicole":  "Calm, measured, soothing — well-paced, suits long-form narration (American)",
-    "af_nova":    "Crisp, bright, confident — clear and attention-holding (American)",
-    "af_river":   "Gentle, flowing, unhurried — natural storytelling warmth (American)",
-    "af_sarah":   "Approachable, warm, clear — reliable all-purpose narrator (American)",
-    "af_sky":     "Airy, light, breathy — soft delivery, suits contemplative or romance (American)",
+    "af_heart":   "Warm, expressive, emotive — best all-round audiobook voice (American) | Voice Quality: — | Grade: A",
+    "af_bella":   "Bright, animated, youthful — engaging for YA or upbeat narratives (American) | Voice Quality: A | Grade: A-",
+    "af_nicole":  "Calm, measured, soothing — headphone-optimised, suits long-form narration (American) | Voice Quality: B | Grade: B-",
+    "af_aoede":   "Soft, lyrical, musical cadence — great for poetry or literary fiction (American) | Voice Quality: B | Grade: C+",
+    "af_kore":    "Darker, deeper, mysterious — strong for thriller or gothic fiction (American) | Voice Quality: B | Grade: C+",
+    "af_sarah":   "Approachable, warm, clear — reliable all-purpose narrator (American) | Voice Quality: B | Grade: C+",
+    "af_alloy":   "Smooth, neutral, versatile — clean delivery, suits non-fiction (American) | Voice Quality: B | Grade: C",
+    "af_nova":    "Crisp, bright, confident — clear and attention-holding (American) | Voice Quality: B | Grade: C",
+    "af_jessica": "Professional, articulate, composed — good for business or self-help (American) | Voice Quality: C | Grade: D",
+    "af_river":   "Gentle, flowing, unhurried — natural storytelling warmth (American) | Voice Quality: C | Grade: D",
+    "af_sky":     "Airy, light, breathy — soft delivery, suits contemplative or romance (American) | Voice Quality: B | Grade: C-",
     # ── American English male ─────────────────────────────────────────────────
-    "am_adam":    "Warm, deep, trustworthy — classic audiobook narrator quality (American)",
-    "am_echo":    "Resonant, smooth, deliberate — strong presence, suits drama (American)",
-    "am_eric":    "Friendly, mid-range, approachable — natural and easy to listen to (American)",
-    "am_fenrir":  "Deep, powerful, commanding — intense, suits action or fantasy (American)",
-    "am_liam":    "Youthful, energetic, casual — good for contemporary or YA fiction (American)",
-    "am_michael": "Clear, authoritative, measured — polished narrator, suits non-fiction (American)",
-    "am_onyx":    "Rich, deep, velvety — smooth and immersive long-form voice (American)",
-    "am_puck":    "Playful, quick, mischievous — expressive range, suits comedy or fantasy (American)",
+    "am_fenrir":  "Deep, powerful, commanding — intense, suits action or fantasy (American) | Voice Quality: B | Grade: C+",
+    "am_michael": "Clear, authoritative, measured — polished narrator, suits non-fiction (American) | Voice Quality: B | Grade: C+",
+    "am_puck":    "Playful, quick, mischievous — expressive range, suits comedy or fantasy (American) | Voice Quality: B | Grade: C+",
+    "am_echo":    "Resonant, smooth, deliberate — strong presence, suits drama (American) | Voice Quality: C | Grade: D",
+    "am_eric":    "Friendly, mid-range, approachable — natural and easy to listen to (American) | Voice Quality: C | Grade: D",
+    "am_liam":    "Youthful, energetic, casual — good for contemporary or YA fiction (American) | Voice Quality: C | Grade: D",
+    "am_onyx":    "Rich, deep, velvety — smooth and immersive long-form voice (American) | Voice Quality: C | Grade: D",
+    "am_adam":    "Warm, deep, trustworthy — classic audiobook narrator quality (American) | Voice Quality: D | Grade: F+",
     # ── British English female ────────────────────────────────────────────────
-    "bf_alice":   "Refined, proper, precise — classic British female narrator (British)",
-    "bf_emma":    "Elegant, composed, warm — versatile literary narrator (British)",
-    "bf_lily":    "Soft, gentle, understated — calm and pleasant for long listens (British)",
+    "bf_emma":    "Elegant, composed, warm — versatile literary narrator (British) | Voice Quality: B | Grade: B-",
+    "bf_isabella":"Refined, clear, expressive — well-suited to literary fiction (British) | Voice Quality: B | Grade: C",
+    "bf_alice":   "Proper, precise, understated — classic British female narrator (British) | Voice Quality: C | Grade: D",
+    "bf_lily":    "Soft, gentle, unhurried — calm and pleasant for long listens (British) | Voice Quality: C | Grade: D",
     # ── British English male ──────────────────────────────────────────────────
-    "bm_daniel":  "Professional, measured, even — reliable and clear documentary style (British)",
-    "bm_fable":   "Rich, storytelling quality, slightly theatrical — strong for fiction (British)",
-    "bm_george":  "Classic, authoritative narrator — traditional audiobook gravitas (British)",
-    "bm_lewis":   "Deep, resonant, unhurried — commanding and immersive (British)",
+    "bm_fable":   "Rich, storytelling quality, slightly theatrical — strong for fiction (British) | Voice Quality: B | Grade: C",
+    "bm_george":  "Classic, authoritative narrator — traditional audiobook gravitas (British) | Voice Quality: B | Grade: C",
+    "bm_lewis":   "Deep, resonant, unhurried — commanding and immersive (British) | Voice Quality: C | Grade: D+",
+    "bm_daniel":  "Professional, measured, even — reliable documentary style (British) | Voice Quality: C | Grade: D",
 }
 
 
-def main():
+def main(arguments=None):
     parser = argparse.ArgumentParser(
         description="Convert EPUB or PDF to an expressive AI audiobook using Kokoro TTS",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -462,7 +536,15 @@ def main():
     )
     parser.add_argument(
         "-v", "--voice", default="af_heart",
-        help="Kokoro voice ID (default: af_heart). Use --list-voices to see options."
+        help="Single voice ID (default: af_heart). Ignored when -vs or -vsa is set."
+    )
+    parser.add_argument(
+        "-vs", "--voices", nargs="+", metavar="VOICE",
+        help="One or more voice IDs to render in parallel, e.g. -vs af_heart am_adam bm_george"
+    )
+    parser.add_argument(
+        "-vsa", "--voices-all", action="store_true",
+        help="Render the book in every voice defined in VOICE_INFO"
     )
     parser.add_argument(
         "-s", "--speed", type=float, default=0.9,
@@ -481,7 +563,7 @@ def main():
         help="Comma-separated chapter indices to process, e.g. '1,2,3' (for testing)"
     )
 
-    args = parser.parse_args()
+    args = parser.parse_args(arguments)
 
     if args.list_voices:
         print("\nAvailable Kokoro voices:\n")
@@ -503,16 +585,30 @@ def main():
         print(f"Error: unsupported file type '{input_path.suffix}'. Use .epub or .pdf")
         sys.exit(1)
 
+    # ── Resolve voice list ────────────────────────────────────────────────────
+    if args.voices_all:
+        voices = list(VOICE_INFO.keys())
+    elif args.voices:
+        invalid = [v for v in args.voices if v not in VOICE_INFO]
+        if invalid:
+            print(f"Error: unknown voice(s): {', '.join(invalid)}")
+            print("Run with -lv to see available voices.")
+            sys.exit(1)
+        voices = args.voices
+    else:
+        voices = [args.voice]
+
     if args.article:
         clean_pdf.strip_pdf(input_path, input_path)
 
     out_dir = Path(args.output) if args.output else Path.cwd() / f"{input_path.stem}"
     out_dir.mkdir(parents=True, exist_ok=True)
+
     print(f"\n📚 Audiobook Maker")
-    print(f"   Input : {input_path}")
-    print(f"   Voice : {args.voice}  ({VOICE_INFO.get(args.voice, 'custom')})")
-    print(f"   Speed : {args.speed}x")
-    print(f"   Output: {out_dir}/\n")
+    print(f"   Input  : {input_path}")
+    print(f"   Voices : {', '.join(voices)}")
+    print(f"   Speed  : {args.speed}x")
+    print(f"   Output : {out_dir}/\n")
 
     # ── Extract chapters ──────────────────────────────────────────────────────
     print("── Extracting chapters ──")
@@ -525,7 +621,6 @@ def main():
         print("Error: no chapters extracted — check the file and try again.")
         sys.exit(1)
 
-    # Optionally filter to specific chapters (useful for testing)
     if args.chapters_only:
         indices = [int(x) - 1 for x in args.chapters_only.split(',')]
         chapters = [chapters[i] for i in indices if i < len(chapters)]
@@ -533,15 +628,16 @@ def main():
     print(f"\nFound {len(chapters)} chapter(s):\n")
     for i, (title, text) in enumerate(chapters):
         word_count = len(text.split())
-        est_min = word_count / (140 * args.speed)  # ~140 words/min narration
+        est_min = word_count / (140 * args.speed)
         print(f"  [{i+1:2d}] {title[:60]:<60}  {word_count:>6} words  (~{est_min:.0f} min)")
 
     total_words = sum(len(t.split()) for _, t in chapters)
     total_est = total_words / (140 * args.speed)
-    print(f"\n  Total: {total_words:,} words  (~{total_est:.0f} min estimated)")
+    print(f"\n  Total: {total_words:,} words  (~{total_est:.0f} min estimated per voice)")
+    print(f"  Voices: {len(voices)}  →  ~{total_est:.0f} min total (GPU serialized)\n")
 
-    # ── Load Kokoro ───────────────────────────────────────────────────────────
-    print("\n── Loading Kokoro TTS (CUDA) ──")
+    # ── Load Kokoro pipelines (one per lang_code needed) ──────────────────────
+    print("── Loading Kokoro TTS (CUDA) ──")
     print("  (First run will download model weights ~330 MB)")
     try:
         import torch
@@ -555,57 +651,66 @@ def main():
         print(f"  ✓ GPU: {gpu_name}")
 
         from kokoro import KPipeline
-        lang_code = 'b' if args.voice.startswith('b') else 'a'
-        pipeline = KPipeline(lang_code=lang_code, device='cuda', repo_id='hexgrad/Kokoro-82M')
-        print(f"  ✓ Kokoro loaded  (lang={lang_code}, device=cuda)\n")
+
+        needed_lang_codes = set('b' if v.startswith('b') else 'a' for v in voices)
+        pipelines = {}
+        for lang_code in sorted(needed_lang_codes):
+            pipelines[lang_code] = KPipeline(
+                lang_code=lang_code, device='cuda', repo_id='hexgrad/Kokoro-82M'
+            )
+            label = "American English" if lang_code == 'a' else "British English"
+            print(f"  ✓ Pipeline loaded: lang={lang_code} ({label})")
+        print()
+
     except ImportError:
         print("\nError: Kokoro not installed. Run:")
         print("  pip install kokoro soundfile")
         sys.exit(1)
 
-    # ── Synthesize each chapter ───────────────────────────────────────────────
-    print("── Synthesizing chapters ──\n")
-    chapter_files = []
-    chapter_durations = []
+    # ── Process voices via ThreadPoolExecutor ─────────────────────────────────
+    gpu_lock = threading.Lock()
+    book_title = input_path.stem.replace('_', ' ').replace('-', ' ').title()
 
-    for i, (title, text) in enumerate(chapters):
-        # Sanitize title for filename
-        safe = re.sub(r'[^\w\s\-]', '', title).strip()
-        safe = re.sub(r'\s+', '_', safe)[:50]
-        out_file = out_dir / f"{i+1:02d}_{safe}.wav"
+    results: dict[str, Path | None] = {}
 
-        print(f"[{i+1}/{len(chapters)}] {title}")
-        duration = synthesize_chapter(
-            pipeline, title, text, out_file,
-            voice=args.voice, speed=args.speed
-        )
-        chapter_files.append(out_file)
-        chapter_durations.append(duration)
+    with ThreadPoolExecutor(max_workers=len(voices)) as executor:
+        futures = {
+            executor.submit(
+                process_voice,
+                voice,
+                chapters,
+                pipelines,
+                gpu_lock,
+                out_dir,
+                input_path.stem,
+                args.speed,
+                book_title,
+            ): voice
+            for voice in voices
+        }
 
-    # ── M4B (always) ──────────────────────────────────────────────────────────
-    m4b_path = out_dir / f"{input_path.stem}_(kokoro_{args.voice}_{args.speed}).m4b"
-    export_m4b(
-        chapter_files,
-        [t for t, _ in chapters],
-        chapter_durations,
-        m4b_path,
-        book_title=input_path.stem.replace('_', ' ').replace('-', ' ').title(),
-    )
-
-    # ── Cleanup WAVs ──────────────────────────────────────────────────────────
-    if m4b_path.exists():
-        for f in chapter_files:
-            f.unlink(missing_ok=True)
+        for future in as_completed(futures):
+            voice = futures[future]
+            try:
+                returned_voice, m4b_path = future.result()
+                results[returned_voice] = m4b_path
+            except Exception as exc:
+                print(f"\n[{voice}] ✗ Failed with exception: {exc}")
+                results[voice] = None
 
     # ── Summary ───────────────────────────────────────────────────────────────
-    total_actual = sum(chapter_durations)
-    print(f"\n{'═'*55}")
-    print(f"✅  Done!")
-    print(f"   Chapters : {len(chapter_files)}")
-    print(f"   Runtime  : {total_actual/60:.1f} minutes")
-    if m4b_path.exists():
-        print(f"   M4B      : {m4b_path.resolve()}")
-    print(f"{'═'*55}\n")
+    print(f"\n{'═'*60}")
+    print(f"✅  All voices complete!")
+    succeeded = [(v, p) for v, p in results.items() if p is not None]
+    failed    = [v for v, p in results.items() if p is None]
+
+    for voice, m4b_path in succeeded:
+        size_mb = m4b_path.stat().st_size / 1_048_576
+        print(f"   ✓ {voice:<14}  {m4b_path.name}  ({size_mb:.1f} MB)")
+    for voice in failed:
+        print(f"   ✗ {voice:<14}  M4B export failed")
+
+    print(f"{'═'*60}\n")
 
 
 if __name__ == "__main__":
