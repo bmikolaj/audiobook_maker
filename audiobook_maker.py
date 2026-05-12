@@ -401,7 +401,7 @@ def export_m4b(
         print("  Writing M4B with chapter markers...")
         os.system(
             f'ffmpeg -y -i "{combined_aac}" -i "{meta_file}" '
-            f'-map_metadata 1 -c copy "{output_path}_AI" -loglevel warning'
+            f'-map_metadata 1 -c copy "{output_path}" -loglevel warning'
         )
 
     if output_path.exists():
@@ -482,6 +482,78 @@ def process_voice(
     else:
         print(f"[{voice}] ✗ M4B failed — WAV files kept at: {wav_dir}/")
         return voice, None
+
+
+# ── Per-file worker ───────────────────────────────────────────────────────────
+
+def process_file(
+    input_path: Path,
+    voices: list[str],
+    pipelines: dict,
+    gpu_lock: threading.Lock,
+    out_dir: Path,
+    speed: float,
+    article: bool,
+    chapters_only: str | None,
+) -> dict[str, Path | None]:
+    """
+    Extract chapters from one book and synthesize every requested voice in
+    parallel. Runs inside the outer ThreadPoolExecutor so multiple books can
+    extract and encode concurrently; TTS synthesis is serialized via gpu_lock
+    across the entire run.
+    """
+    label = f"[{input_path.name}]"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if article and input_path.suffix.lower() == '.pdf':
+        clean_pdf.strip_pdf(input_path, input_path)
+
+    print(f"\n── {label} Extracting chapters ──")
+    if input_path.suffix.lower() == '.epub':
+        chapters = extract_epub(input_path)
+    else:
+        chapters = extract_pdf(input_path)
+
+    if not chapters:
+        print(f"{label} Error: no chapters extracted — skipping")
+        return {v: None for v in voices}
+
+    if chapters_only:
+        indices = [int(x) - 1 for x in chapters_only.split(',')]
+        chapters = [chapters[i] for i in indices if i < len(chapters)]
+
+    print(f"\n{label} Found {len(chapters)} chapter(s):")
+    for i, (title, text) in enumerate(chapters):
+        word_count = len(text.split())
+        est_min = word_count / (140 * speed)
+        print(f"  [{i+1:2d}] {title[:60]:<60}  {word_count:>6} words  (~{est_min:.0f} min)")
+
+    total_words = sum(len(t.split()) for _, t in chapters)
+    total_est = total_words / (140 * speed)
+    print(f"\n  {label} Total: {total_words:,} words  (~{total_est:.0f} min per voice)\n")
+
+    book_title = input_path.stem.replace('_', ' ').replace('-', ' ').title()
+    results: dict[str, Path | None] = {}
+
+    with ThreadPoolExecutor(max_workers=len(voices)) as voice_executor:
+        futures = {
+            voice_executor.submit(
+                process_voice,
+                voice, chapters, pipelines, gpu_lock,
+                out_dir, input_path.stem, speed, book_title,
+            ): voice
+            for voice in voices
+        }
+        for future in as_completed(futures):
+            voice = futures[future]
+            try:
+                _, m4b_path = future.result()
+                results[voice] = m4b_path
+            except Exception as exc:
+                print(f"\n{label}[{voice}] ✗ Failed: {exc}")
+                results[voice] = None
+
+    return results
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -581,8 +653,22 @@ def main(arguments=None):
         print(f"Error: file not found: {input_path}")
         sys.exit(1)
 
-    if input_path.suffix.lower() not in ('.epub', '.pdf'):
-        print(f"Error: unsupported file type '{input_path.suffix}'. Use .epub or .pdf")
+    # ── Discover input files (single file or directory of books) ─────────────
+    if input_path.is_file():
+        if input_path.suffix.lower() not in ('.epub', '.pdf'):
+            print(f"Error: unsupported file type '{input_path.suffix}'. Use .epub or .pdf")
+            sys.exit(1)
+        files = [input_path]
+    elif input_path.is_dir():
+        files = sorted(
+            f for f in input_path.iterdir()
+            if f.is_file() and f.suffix.lower() in ('.epub', '.pdf')
+        )
+        if not files:
+            print(f"Error: no .epub or .pdf files in {input_path}")
+            sys.exit(1)
+    else:
+        print(f"Error: {input_path} is neither a file nor a directory")
         sys.exit(1)
 
     # ── Resolve voice list ────────────────────────────────────────────────────
@@ -598,43 +684,25 @@ def main(arguments=None):
     else:
         voices = [args.voice]
 
-    if args.article:
-        clean_pdf.strip_pdf(input_path, input_path)
-
-    out_dir = Path(args.output) if args.output else Path.cwd() / f"{input_path.stem}"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    # Single-file + -o keeps the old "out_dir is the literal output path" behavior.
+    # Everything else treats -o (or cwd) as a parent containing per-book subfolders.
+    # For directory input, the input dir's name is inserted as a grouping folder
+    # so all books from "C:/Media/All_Files" land under "<parent>/All_Files/<book>/".
+    if len(files) == 1 and args.output:
+        out_dirs = {files[0]: Path(args.output)}
+        output_label = Path(args.output)
+    else:
+        out_root = Path(args.output) if args.output else Path.cwd()
+        if input_path.is_dir():
+            out_root = out_root / input_path.name
+        out_dirs = {f: out_root / f.stem for f in files}
+        output_label = out_root
 
     print(f"\n📚 Audiobook Maker")
-    print(f"   Input  : {input_path}")
+    print(f"   Input  : {input_path}  ({len(files)} file{'s' if len(files) != 1 else ''})")
     print(f"   Voices : {', '.join(voices)}")
     print(f"   Speed  : {args.speed}x")
-    print(f"   Output : {out_dir}/\n")
-
-    # ── Extract chapters ──────────────────────────────────────────────────────
-    print("── Extracting chapters ──")
-    if input_path.suffix.lower() == '.epub':
-        chapters = extract_epub(input_path)
-    else:
-        chapters = extract_pdf(input_path)
-
-    if not chapters:
-        print("Error: no chapters extracted — check the file and try again.")
-        sys.exit(1)
-
-    if args.chapters_only:
-        indices = [int(x) - 1 for x in args.chapters_only.split(',')]
-        chapters = [chapters[i] for i in indices if i < len(chapters)]
-
-    print(f"\nFound {len(chapters)} chapter(s):\n")
-    for i, (title, text) in enumerate(chapters):
-        word_count = len(text.split())
-        est_min = word_count / (140 * args.speed)
-        print(f"  [{i+1:2d}] {title[:60]:<60}  {word_count:>6} words  (~{est_min:.0f} min)")
-
-    total_words = sum(len(t.split()) for _, t in chapters)
-    total_est = total_words / (140 * args.speed)
-    print(f"\n  Total: {total_words:,} words  (~{total_est:.0f} min estimated per voice)")
-    print(f"  Voices: {len(voices)}  →  ~{total_est:.0f} min total (GPU serialized)\n")
+    print(f"   Output : {output_label}/\n")
 
     # ── Load Kokoro pipelines (one per lang_code needed) ──────────────────────
     print("── Loading Kokoro TTS (CUDA) ──")
@@ -667,49 +735,38 @@ def main(arguments=None):
         print("  pip install kokoro soundfile")
         sys.exit(1)
 
-    # ── Process voices via ThreadPoolExecutor ─────────────────────────────────
+    # ── Process all files in parallel (each spawns its own voice executor) ────
     gpu_lock = threading.Lock()
-    book_title = input_path.stem.replace('_', ' ').replace('-', ' ').title()
+    all_results: dict[Path, dict[str, Path | None]] = {}
 
-    results: dict[str, Path | None] = {}
-
-    with ThreadPoolExecutor(max_workers=len(voices)) as executor:
-        futures = {
-            executor.submit(
-                process_voice,
-                voice,
-                chapters,
-                pipelines,
-                gpu_lock,
-                out_dir,
-                input_path.stem,
-                args.speed,
-                book_title,
-            ): voice
-            for voice in voices
+    with ThreadPoolExecutor(max_workers=len(files)) as file_executor:
+        file_futures = {
+            file_executor.submit(
+                process_file,
+                f, voices, pipelines, gpu_lock, out_dirs[f],
+                args.speed, args.article, args.chapters_only,
+            ): f
+            for f in files
         }
-
-        for future in as_completed(futures):
-            voice = futures[future]
+        for future in as_completed(file_futures):
+            f = file_futures[future]
             try:
-                returned_voice, m4b_path = future.result()
-                results[returned_voice] = m4b_path
+                all_results[f] = future.result()
             except Exception as exc:
-                print(f"\n[{voice}] ✗ Failed with exception: {exc}")
-                results[voice] = None
+                print(f"\n[{f.name}] ✗ Failed with exception: {exc}")
+                all_results[f] = {v: None for v in voices}
 
     # ── Summary ───────────────────────────────────────────────────────────────
     print(f"\n{'═'*60}")
-    print(f"✅  All voices complete!")
-    succeeded = [(v, p) for v, p in results.items() if p is not None]
-    failed    = [v for v, p in results.items() if p is None]
-
-    for voice, m4b_path in succeeded:
-        size_mb = m4b_path.stat().st_size / 1_048_576
-        print(f"   ✓ {voice:<14}  {m4b_path.name}  ({size_mb:.1f} MB)")
-    for voice in failed:
-        print(f"   ✗ {voice:<14}  M4B export failed")
-
+    print(f"✅  All books complete!")
+    for f, voice_results in all_results.items():
+        print(f"\n  📖 {f.name}")
+        for voice, m4b_path in voice_results.items():
+            if m4b_path:
+                size_mb = m4b_path.stat().st_size / 1_048_576
+                print(f"     ✓ {voice:<14}  {m4b_path.name}  ({size_mb:.1f} MB)")
+            else:
+                print(f"     ✗ {voice:<14}  M4B export failed")
     print(f"{'═'*60}\n")
 
 
